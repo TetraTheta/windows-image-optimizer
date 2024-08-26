@@ -1,0 +1,34 @@
+# Created by https://www.toptal.com/developers/gitignore/api/visualstudiocode,powershell,notepadpp
+# Edit at https://www.toptal.com/developers/gitignore?templates=visualstudiocode,powershell,notepadpp
+
+### NotepadPP ###
+# Notepad++ backups #
+*.bak
+
+### PowerShell ###
+# Exclude packaged modules
+*.zip
+
+# Exclude .NET assemblies from source
+*.dll
+
+### VisualStudioCode ###
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+
+# Local History for Visual Studio Code
+.history/
+
+# Built Visual Studio Code Extensions
+*.vsix
+
+### VisualStudioCode Patch ###
+# Ignore all local history of files
+.history
+.ionide
+
+# End of https://www.toptal.com/developers/gitignore/api/visualstudiocode,powershell,notepadpp
+
+.log
+test.ps1
