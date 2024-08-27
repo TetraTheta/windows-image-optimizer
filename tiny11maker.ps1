@@ -2,11 +2,40 @@ param(
   [switch] $CopyBin = $false,
   [switch] $CopyTweak = $false,
   [switch] $Debug = $false,
-  [switch] $WimOnly = $false,
   [System.IO.FileInfo] $ScratchDisk = $env:SystemDrive
 )
 
-$ScriptVersion = "2024-08-26"
+$ScriptVersion = "2024-08-27"
+
+$packageRemovePrefix = @(
+  'Clipchamp.Clipchamp_'
+  'Microsoft.549981C3F5F10_'
+  'Microsoft.BingNews_'
+  'Microsoft.BingWeather_'
+  'Microsoft.GamingApp_'
+  'Microsoft.GetHelp_'
+  'Microsoft.Getstarted_'
+  'Microsoft.MicrosoftOfficeHub_'
+  'Microsoft.MicrosoftSolitaireCollection_'
+  'Microsoft.People_'
+  'Microsoft.PowerAutomateDesktop_'
+  'Microsoft.Todos_'
+  'Microsoft.WindowsAlarms_'
+  'microsoft.windowscommunicationsapps_'
+  'Microsoft.WindowsFeedbackHub_'
+  'Microsoft.WindowsMaps_'
+  'Microsoft.WindowsSoundRecorder_'
+  'Microsoft.Xbox.TCUI_'
+  'Microsoft.XboxGameOverlay_'
+  'Microsoft.XboxGamingOverlay_'
+  'Microsoft.XboxSpeechToTextOverlay_'
+  'Microsoft.YourPhone_'
+  'Microsoft.ZuneMusic_'
+  'Microsoft.ZuneVideo_'
+  'MicrosoftCorporationII.MicrosoftFamily_'
+  'MicrosoftCorporationII.QuickAssist_'
+  'MicrosoftTeams_'
+)
 
 #region Helper Function
 ###################
@@ -99,7 +128,7 @@ try {
 # Check if PowerShell execution is restricted
 if ((Get-ExecutionPolicy) -eq "Restricted") {
   Write-WarnLike "Your current PowerShell Execution Policy is set to Restricted, which prevents scripts from running."
-  $response = Read-Host "Do you want to change it to RemoteSigned? "
+  $response = Read-Host "Do you want to change it to RemoteSigned? >"
   try {
     $response = ConvertTo-Boolean -Value $response
     if ($response) {
@@ -135,16 +164,22 @@ Write-InfoLike "Welcome to the tiny11 image creator! Release: " + $ScriptVersion
 
 # Get $MediaDrive for copying Windows 11 image
 New-Item -ItemType Directory -Force -Path "$ScratchDisk\tiny11\sources" | Out-Null
-$MediaDrive = Read-Host "Please enter the drive letter for the Windows 11 image "
+$MediaDrive = Read-Host "Please enter the drive letter for the Windows 11 image >"
 $MediaDrive = Format-Path -Path $MediaDrive
 
-if ((Test-Path "$MediaDrive\sources\boot.wim") -eq $false -or (Test-Path "$MediaDrive\sources\install.wim") -eq $false) {
-  if ((Test-Path "$MediaDrive\sources\install.esd") -eq $true) {
-    Write-InfoLike "Found install.esd, converting to install.wim..."
-    Start-Process -NoNewWindow -Wait -FilePath "dism" -ArgumentList "/English /Get-ImageInfo /ImageFile:$MediaDrive\sources\install.esd"
-    $index = $null # temporary value
+# Copy install.esd or install.wim (no boot.wim modification)
+$_isESDPresent = Test-Path "$MediaDrive\sources\install.esd"
+$_isWIMPresent = Test-Path "$MediaDrive\sources\install.wim"
+$wimFilePath = "$ScratchDisk\tiny11\sources\install.wim"
+if ($_isWIMPresent -and $_isESDPresent) {
+  Write-WarnLike "Both install.wim and install.esd are detected. Copying install.wim only..."
+  Copy-Item -Path "$MediaDrive\install.wim" -Destination "$ScratchDisk\tiny11\sources" -Recurse -Force | Out-Null
+} elseif ($_isESDPresent) {
+  Write-InfoLike "Found install.esd, converting to install.wim..."
+  Start-Process -NoNewWindow -Wait -FilePath "dism" -ArgumentList "/English /Get-ImageInfo /ImageFile:$MediaDrive\sources\install.esd"
+  $index = $null # temporary value
     do {
-      $index = Read-Host "Please enter the image index to extract (default: 1) "
+      $index = Read-Host "Please enter the image index to extract (default: 1) >"
       if ($index -eq "") {
         $index = 1
       }
@@ -155,23 +190,21 @@ if ((Test-Path "$MediaDrive\sources\boot.wim") -eq $false -or (Test-Path "$Media
     } until ($_isValid -and $parsedIndex -ge 0)
     $index = $parsedIndex
     Write-InfoLike "Converting install.esd to install.wim. This may take a while..."
-    Start-Process -NoNewWindow -Wait -FilePath "dism" -ArgumentList "/Export-Image /SourceImageFile:`"$MediaDrive\sources\install.esd`" /SourceIndex:$index /DestinationImageFile:`"$ScratchDisk\tiny11\sources\install.wim`" /Compress:max /CheckIntegrity"
-  } else {
-    Write-ErrorLike "Can't find Windows OS installation files in the specified Drive Letter."
-    Write-ErrorLike "Please enter the correct DVD Drive Letter."
-    exit
-  }
+    Start-Process -NoNewWindow -Wait -FilePath "dism" -ArgumentList "/Export-Image /SourceImageFile:`"$MediaDrive\sources\install.esd`" /SourceIndex:$index /DestinationImageFile:`"$wimFilePath`" /Compress:max /CheckIntegrity"
+} elseif ($_isWIMPresent) {
+  Write-WarnLike "Found install.wim. Copying..."
+  Copy-Item -Path "$MediaDrive\install.wim" -Destination "$ScratchDisk\tiny11\sources" -Recurse -Force | Out-Null
+} else {
+  Write-ErrorLike "Can't find Windows OS installation files in the specified Drive Letter."
+  Write-ErrorLike "Please enter the correct DVD Drive Letter."
+  exit
 }
-
-$wimFilePath = "$ScratchDisk\tiny11\sources\install.wim"
-
-Write-InfoLike "Copying Windows image..."
-Copy-Item -Path "$MediaDrive\*" -Destination "$ScratchDisk\tiny11" -Recurse -Force | Out-Null
-Set-ItemProperty -Path "$ScratchDisk\tiny11\sources\install.esd" -Name IsReadOnly -Value $false | Out-Null
-Remove-Item "$ScratchDisk\tiny11\sources\install.esd" | Out-Null
 Write-InfoLike "Copy complete!"
 Start-Sleep -Seconds 2
 Clear-Host
+
+# Mount install.wim
+$mountDir = "$ScratchDisk\MountDir"
 Write-InfoLike "Getting image information:"
 Start-Process -NoNewWindow -Wait -FilePath "dism" -ArgumentList "/English /Get-ImageInfo /ImageFile:$wimFilePath"
 $index = $null # temporary value
@@ -186,71 +219,59 @@ do {
   }
 } until ($_isValid -and $parsedIndex -ge 0)
 Write-InfoLike "Mounting Windows image. This may take a while."
-
-$wimFilePath = "$ScratchDisk\tiny11\sources\install.wim"
 Start-Process -NoNewWindow -Wait -FilePath "takeown" -ArgumentList "/F $wimFilePath"
-# TODO
-Start-Process -NoNewWindow -Wait -FilePath "icacls" -ArgumentList "`"`""
-
-& takeown "/F" $wimFilePath 
-& icacls $wimFilePath "/grant" "$($adminGroup.Value):(F)"
+Start-Process -NoNewWindow -Wait -FilePath "icacls" -ArgumentList "`"$wimFilePath`" /grant Administrators:F"
 try {
-  Set-ItemProperty -Path $wimFilePath -Name IsReadOnly -Value $false -ErrorAction Stop
+  Set-ItemProperty -Path $wimFilePath -Name IsReadOnly -Value $false
 }
 catch {
-  # This block will catch the error and suppress it.
+  Write-ErrorLike "Failed to make install.wim not read-only. Aborting..."
+  exit 1
 }
-New-Item -ItemType Directory -Force -Path "$ScratchDisk\scratchdir" > $null
-& dism /English "/mount-image" "/imagefile:$($env:SystemDrive)\tiny11\sources\install.wim" "/index:$index" "/mountdir:$($env:SystemDrive)\scratchdir"
+New-Item -ItemType Directory -Path $mountDir | Out-Null
+Start-Process -NoNewWindow -Wait -FilePath "dism" -ArgumentList "/English /Mount-Image /ImageFile:$wimFilePath /Index:$index /MountDir:$mountDir"
 
-$imageIntl = & dism /English /Get-Intl "/Image:$($env:SystemDrive)\scratchdir"
-$languageLine = $imageIntl -split '\n' | Where-Object { $_ -match 'Default system UI language : ([a-zA-Z]{2}-[a-zA-Z]{2})' }
-
+# Get image information
+$imageIntl = Invoke-Expression -Command "dism /English /Get-Intl /Image:$mountDir"
+$languageLine = $imageIntl -split '\r?\n' | Where-Object { $_ -match 'Default system UI language : ([a-zA-Z]{2}-[a-zA-Z]{2})' }
 if ($languageLine) {
   $languageCode = $Matches[1]
-  Write-InfoLike "Default system UI language code: $languageCode"
+  Write-InfoLike "Image System UI Language Code: $languageCode"
 }
 else {
-  Write-InfoLike "Default system UI language code not found."
+  Write-InfoLike "Image System UI Language Code not found."
 }
-
-$imageInfo = & 'dism' '/English' '/Get-WimInfo' "/wimFile:$($env:SystemDrive)\tiny11\sources\install.wim" "/index:$index"
-$lines = $imageInfo -split '\r?\n'
-
-foreach ($line in $lines) {
-  if ($line -like '*Architecture : *') {
-    $architecture = $line -replace 'Architecture : ', ''
-    # If the architecture is x64, replace it with amd64
-    if ($architecture -eq 'x64') {
-      $architecture = 'amd64'
+$imageInfo = Invoke-Expression -Command "dism /English /Get-ImageInfo /ImageFile:$wimFilePath /Index:$index"
+$arch = $null # temporary value
+$imageInfo -split '\r?\n' | ForEach-Object {
+  if ($_ -like '*Architecture : *') {
+    $arch = $_ -replace 'Architecture : ', ''
+    if ($arch -eq "x64") {
+      $arch = "amd64"
     }
-    Write-InfoLike "Architecture: $architecture"
     break
   }
 }
-
-if (-not $architecture) {
-  Write-InfoLike "Architecture information not found."
+if ($arch) {
+  Write-InfoLike "Image Architecture: $arch"
+} else {
+  Write-ErrorLike "Image Architecture information not found."
 }
 
+# Remove packages
 Write-InfoLike "Mounting complete! Performing removal of applications..."
-
-$packages = & 'dism' '/English' "/image:$($env:SystemDrive)\scratchdir" '/Get-ProvisionedAppxPackages' |
-ForEach-Object {
+$installedPackages = Invoke-Expression -Command "dism /English /Get-ProvisionedAppxPackages /Image:$mountDir" | ForEach-Object {
   if ($_ -match 'PackageName : (.*)') {
-    $matches[1]
+    $Matches.1
   }
 }
-$packagePrefixes = 'Clipchamp.Clipchamp_', 'Microsoft.BingNews_', 'Microsoft.BingWeather_', 'Microsoft.GamingApp_', 'Microsoft.GetHelp_', 'Microsoft.Getstarted_', 'Microsoft.MicrosoftOfficeHub_', 'Microsoft.MicrosoftSolitaireCollection_', 'Microsoft.People_', 'Microsoft.PowerAutomateDesktop_', 'Microsoft.Todos_', 'Microsoft.WindowsAlarms_', 'microsoft.windowscommunicationsapps_', 'Microsoft.WindowsFeedbackHub_', 'Microsoft.WindowsMaps_', 'Microsoft.WindowsSoundRecorder_', 'Microsoft.Xbox.TCUI_', 'Microsoft.XboxGamingOverlay_', 'Microsoft.XboxGameOverlay_', 'Microsoft.XboxSpeechToTextOverlay_', 'Microsoft.YourPhone_', 'Microsoft.ZuneMusic_', 'Microsoft.ZuneVideo_', 'MicrosoftCorporationII.MicrosoftFamily_', 'MicrosoftCorporationII.QuickAssist_', 'MicrosoftTeams_', 'Microsoft.549981C3F5F10_'
-
-$packagesToRemove = $packages | Where-Object {
-  $packageName = $_
-  $packagePrefixes -contains ($packagePrefixes | Where-Object { $packageName -like "$_*" })
+$installedPackages | Where-Object {
+  $_name = $_
+  $packageRemovePrefix -contains ($packageRemovePrefix | Where-Object { $_name -like "$_*" })
+} | ForEach-Object {
+  Start-Process -NoNewWindow -Wait -FilePath "dism" -ArgumentList "/English /Image:$mountDir /Remove-ProvisionedAppxPackage /PackageName:$_"
 }
-foreach ($package in $packagesToRemove) {
-  & 'dism' '/English' "/image:$($env:SystemDrive)\scratchdir" '/Remove-ProvisionedAppxPackage' "/PackageName:$package"
-}
-
+#TODO
 
 Write-InfoLike "Removing Edge:"
 Remove-Item -Path "$ScratchDisk\scratchdir\Program Files (x86)\Microsoft\Edge" -Recurse -Force >null
