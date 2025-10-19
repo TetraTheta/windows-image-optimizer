@@ -2,7 +2,7 @@ param(
   [System.IO.DirectoryInfo][Parameter(Mandatory, Position = 0)] $MountDir # Directory where install.wim is mounted.
 )
 
-$ScriptVersion = '250727'
+$ScriptVersion = '251019'
 
 $packageRemovePrefix = @(
   'Clipchamp.Clipchamp_'
@@ -81,7 +81,7 @@ function Write-HInfo {
 function Check-Admin {
   if (!([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     Write-HInfo 'Restarting the script as admin in a new window, you can close this one.'
-    $newProcess = New-Object System.Diagnostics.ProcessStartInfo 'PowerShell';
+    $newProcess = New-Object System.Diagnostics.ProcessStartInfo 'powershell.exe';
     $newProcess.Arguments = $myInvocation.MyCommand.Definition;
     $newProcess.Verb = 'runas';
     [System.Diagnostics.Process]::Start($newProcess);
@@ -138,11 +138,17 @@ function Add-Reg {
     [string] $Value,
     [switch] $Verbose
   )
+  if ([string]::IsNullOrEmpty($Key)) {
+    $a = "add `"$Path`" /ve /t `"$Type`" /d `"$Value`" /f"
+  } else {
+    $a = "add `"$Path`" /v `"$Key`" /t `"$Type`" /d `"$Value`" /f"
+  }
+
   if ($Verbose) {
-    Start-Process -NoNewWindow -Wait -FilePath 'reg' -ArgumentList "add `"$Path`" /v `"$Key`" /t `"$Type`" /d `"$Value`" /f"
+    Start-Process -NoNewWindow -Wait -FilePath 'reg.exe' -ArgumentList $a
   }
   else {
-    Start-Process -NoNewWindow -Wait -FilePath 'reg' -ArgumentList "add `"$Path`" /v `"$Key`" /t `"$Type`" /d `"$Value`" /f" | Out-Null
+    Start-Process -NoNewWindow -Wait -FilePath 'reg.exe' -ArgumentList $a | Out-Null
   }
 }
 
@@ -154,20 +160,43 @@ function Remove-Reg {
   )
   if ($Key -eq '') {
     if ($Verbose) {
-      Start-Process -NoNewWindow -Wait -FilePath 'reg' -ArgumentList "delete `"$Path`" /f"
+      Start-Process -NoNewWindow -Wait -FilePath 'reg.exe' -ArgumentList "delete `"$Path`" /f"
     }
     else {
-      Start-Process -NoNewWindow -Wait -FilePath 'reg' -ArgumentList "delete `"$Path`" /f" | Out-Null
+      Start-Process -NoNewWindow -Wait -FilePath 'reg.exe' -ArgumentList "delete `"$Path`" /f" | Out-Null
     }
   }
   else {
     if ($Verbose) {
-      Start-Process -NoNewWindow -Wait -FilePath 'reg' -ArgumentList "delete `"$Path`" /v `"$Key`" /f"
+      Start-Process -NoNewWindow -Wait -FilePath 'reg.exe' -ArgumentList "delete `"$Path`" /v `"$Key`" /f"
     }
     else {
-      Start-Process -NoNewWindow -Wait -FilePath 'reg' -ArgumentList "delete `"$Path`" /v `"$Key`" /f" | Out-Null
+      Start-Process -NoNewWindow -Wait -FilePath 'reg.exe' -ArgumentList "delete `"$Path`" /v `"$Key`" /f" | Out-Null
     }
   }
+}
+
+########################################
+
+function Remove-MyPC {
+  param([string] $UUID)
+  Remove-Reg -Path "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\MyComputer\NameSpace\$UUID"
+  Remove-Reg -Path "HKLM\zSOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Explorer\MyComputer\NameSpace\$UUID"
+}
+
+function Remove-UserDir {
+  param([string] $UUID)
+  Add-Reg -Path "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\FolderDescriptions\$UUID\PropertyBag" -Key 'ThisPCPolicy' -Type REG_SZ -Value 'Hide'
+  Add-Reg -Path "HKLM\zSOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Explorer\FolderDescriptions\$UUID\PropertyBag" -Key 'ThisPCPolicy' -Type REG_SZ -Value 'Hide'
+}
+
+function Fix-UserDir {
+  param(
+    [string] $Path,
+    [string] $Name
+  )
+  Add-Reg -Path "HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\FolderDescriptions\$Path" -Key 'ParsingName' -Type REG_SZ -Value "shell:::$Name"
+  Add-Reg -Path "HKLM\zSOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Explorer\FolderDescriptions\$Path" -Key 'ParsingName' -Type REG_SZ -Value "shell:::{59031A47-3F72-44A7-89C5-5595FE6B30EE}\$Name"
 }
 
 ###############
@@ -196,7 +225,7 @@ function Main {
   Clear-Host
 
   # Remove Package
-  $installedPackages = Invoke-Expression -Command "dism /English /Image:`"$MountDir`" /Get-ProvisionedAppxPackages" | ForEach-Object {
+  $installedPackages = Invoke-Expression -Command "dism.exe /English /Image:`"$MountDir`" /Get-ProvisionedAppxPackages" | ForEach-Object {
     if ($_ -match 'PackageName : (.*)') {
       $Matches[1]
     }
@@ -207,23 +236,23 @@ function Main {
   }
   foreach ($package in $packagesToRemove) {
     Write-HInfo "Removing '$package'"
-    Invoke-Expression -Command "dism /English /Image:`"$MountDir`" /Remove-ProvisionedAppxPackage /PackageName:$package"
+    Invoke-Expression -Command "dism.exe /English /Image:`"$MountDir`" /Remove-ProvisionedAppxPackage /PackageName:$package"
   }
 
   # TODO: Remove MS Edge only (Leave WebView)
 
   # Mount Registry Files
-  Invoke-Expression -Command "reg load HKLM\zCOMPONENTS `"$MountDir\Windows\System32\config\COMPONENTS`"" | Out-Null
-  Invoke-Expression -Command "reg load HKLM\zDEFAULT `"$MountDir\Windows\System32\config\default`"" | Out-Null # HKEY_USERS\.DEFAULT
-  Invoke-Expression -Command "reg load HKLM\zNTUSER `"$MountDir\Users\Default\ntuser.dat`"" | Out-Null # HKEY_CURRENT_USER
-  Invoke-Expression -Command "reg load HKLM\zSOFTWARE `"$MountDir\Windows\System32\config\SOFTWARE`"" | Out-Null # HKEY_LOCAL_MACHINE\SOFTWARE
-  Invoke-Expression -Command "reg load HKLM\zSYSTEM `"$MountDir\Windows\System32\config\SYSTEM`"" | Out-Null # HKEY_LOCAL_MACHINE\SYSTEM
+  Invoke-Expression -Command "reg.exe load HKLM\zCOMPONENTS `"$MountDir\Windows\System32\config\COMPONENTS`"" | Out-Null
+  Invoke-Expression -Command "reg.exe load HKLM\zDEFAULT `"$MountDir\Windows\System32\config\default`"" | Out-Null # HKEY_USERS\.DEFAULT
+  Invoke-Expression -Command "reg.exe load HKLM\zNTUSER `"$MountDir\Users\Default\ntuser.dat`"" | Out-Null # HKEY_CURRENT_USER
+  Invoke-Expression -Command "reg.exe load HKLM\zSOFTWARE `"$MountDir\Windows\System32\config\SOFTWARE`"" | Out-Null # HKEY_LOCAL_MACHINE\SOFTWARE
+  Invoke-Expression -Command "reg.exe load HKLM\zSYSTEM `"$MountDir\Windows\System32\config\SYSTEM`"" | Out-Null # HKEY_LOCAL_MACHINE\SYSTEM
 
   # Get 'SeTakeOwnershipPrivilege' Privilege
   Get-Privilege
 
   # Take Ownership of Protected Registry Key
-  $adminSID = New-Object System.Security.Principal.SecurityIdentifier("S-1-5-32-544")
+  $adminSID = New-Object System.Security.Principal.SecurityIdentifier("S-1-5-32-544") # (Builtin) Administrators
   $adminGroup = $adminSID.Translate([System.Security.Principal.NTAccount])
   $rwSubTree = [Microsoft.Win32.RegistryKeyPermissionCheck]::ReadWriteSubTree
   $takeOwnership = [System.Security.AccessControl.RegistryRights]::TakeOwnership
@@ -244,6 +273,7 @@ function Main {
   #    01 Default Settings    #
   #############################
   # Enable Local Account on OOBE
+  Write-HInfo 'Enable Local Account on OOBE'
   Add-Reg -Path 'HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\OOBE' -Key 'BypassNRO' -Type REG_DWORD -Value 1
 
   # Disable Lock Screen
@@ -283,7 +313,12 @@ function Main {
 
   # Disable Startup Program Delay
   Write-HInfo 'Disable Startup Program Delay'
+  Add-Reg -Path 'HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\Serialize' -Key 'StartupDelayInMSec' -Type REG_DWORD -Value 0
   Add-Reg -Path 'HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Serialize' -Key 'StartupDelayInMSec' -Type REG_DWORD -Value 0
+
+  # Faster Shutdown
+  Write-HInfo 'Faster Shutdown'
+  Add-Reg -Path 'HKLM\zSYSTEM\ControlSet001\Control' -Key 'WaitToKillServiceTimeout' -Type REG_SZ -Value 2500
 
   # Unblock SetUserFTA
   Write-HInfo 'Unblock SetUserFTA'
@@ -293,48 +328,130 @@ function Main {
   Remove-Reg -Path 'HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\Tasks\{471A373A-0CB5-4E87-9FDD-1F86F22036E1}'
 
   # Disable Automatic Proxy Detection
+  Write-HInfo 'Disable Automatic Proxy Detection'
   Add-Reg -Path 'HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings' -Key 'AutoDetect' -Type REG_DWORD -Value 0
 
   # Disable BitLocker Device Encryption
+  Write-HInfo 'Disable BitLocker Device Encryption'
   Add-Reg -Path 'HKLM\zSYSTEM\ControlSet001\Control\BitLocker' -Key 'PreventDeviceEncryption' -Type REG_DWORD -Value 1
 
+  # Disable Fast Boot
+  Write-HInfo 'Disable Fast Boot'
+  Add-Reg -Path 'HKLM\zSYSTEM\ControlSet001\Control\Session Manager\Power' -Key 'HiberbootEnabled' -Type REG_DWORD -Value 0
+
+  # No Warning about missing 'ms-gamebar'
+  Write-HInfo "No Warning about missing 'ms-gamebar'"
+  Add-Reg -Path 'HKLM\zSOFTWARE\Classes\ms-gamebar' -Key '' -Type REG_SZ -Value 'URL:ms-gamebar'
+  Add-Reg -Path 'HKLM\zSOFTWARE\Classes\ms-gamebar' -Key 'URL Protocol' -Type REG_SZ -Value ''
+  Add-Reg -Path 'HKLM\zSOFTWARE\Classes\ms-gamebar' -Key 'NoOpenWith' -Type REG_SZ -Value ''
+  Add-Reg -Path 'HKLM\zSOFTWARE\Classes\ms-gamebar\shell\open\command' -Key '' -Type REG_EXPAND_SZ -Value '%SystemRoot%\System32\systray.exe'
+  Add-Reg -Path 'HKLM\zSOFTWARE\Classes\ms-gamebarservices' -Key '' -Type REG_SZ -Value 'URL:ms-gamebar'
+  Add-Reg -Path 'HKLM\zSOFTWARE\Classes\ms-gamebarservices' -Key 'URL Protocol' -Type REG_SZ -Value ''
+  Add-Reg -Path 'HKLM\zSOFTWARE\Classes\ms-gamebarservices' -Key 'NoOpenWith' -Type REG_SZ -Value ''
+  Add-Reg -Path 'HKLM\zSOFTWARE\Classes\ms-gamebarservices\shell\open\command' -Key '' -Type REG_EXPAND_SZ -Value '%SystemRoot%\System32\systray.exe'
+
+  # Disable ms-gaming Overlay
+  Write-HInfo 'Disable ms-gaming Overlay'
+  Add-Reg -Path 'HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\GameDVR' -Key 'AppCaptureEnabled' -Type REG_DWORD -Value 0
+  Add-Reg -Path 'HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\GameDVR' -Key 'AppCaptureEnabled' -Type REG_DWORD -Value 0
+
+  # Enable NumLock by Default
+  Write-HInfo 'Enable NumLock by Default'
+  Add-Reg -Path 'HKLM\zNTUSER\Control Panel\Keyboard' -Key 'InitialKeyboardIndicators' -Type REG_SZ -Value 2
 
   ####################
   #    02 Privacy    #
   ####################
   # Disable Telemetry
+  Write-HInfo 'Disable Telemetry'
+  Add-Reg -Path 'HKLM\zNTUSER\Software\Microsoft\Input\TIPC' -Key 'Enabled' -Type REG_DWORD -Value 0
   Add-Reg -Path 'HKLM\zNTUSER\Software\Microsoft\InputPersonalization' -Key 'RestrictImplicitInkCollection' -Type REG_DWORD -Value 1
   Add-Reg -Path 'HKLM\zNTUSER\Software\Microsoft\InputPersonalization' -Key 'RestrictImplicitTextCollection' -Type REG_DWORD -Value 1
   Add-Reg -Path 'HKLM\zNTUSER\Software\Microsoft\InputPersonalization\TrainedDataStore' -Key 'HarvestContacts' -Type REG_DWORD -Value 0
-  Add-Reg -Path 'HKLM\zNTUSER\Software\Microsoft\Input\TIPC' -Key 'Enabled' -Type REG_DWORD -Value 0
   Add-Reg -Path 'HKLM\zNTUSER\Software\Microsoft\Personalization\Settings' -Key 'AcceptedPrivacyPolicy' -Type REG_DWORD -Value 0
+  Add-Reg -Path 'HKLM\zNTUSER\Software\Microsoft\Siuf\Rules' -Key 'NumberOfSIUFInPeriod' -Type REG_DWORD -Value 0
   Add-Reg -Path 'HKLM\zNTUSER\Software\Microsoft\Speech_OneCore\Settings\OnlineSpeechPrivacy' -Key 'HasAccepted' -Type REG_DWORD -Value 0
   Add-Reg -Path 'HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo' -Key 'Enabled' -Type REG_DWORD -Value 0
+  Add-Reg -Path 'HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Diagnostics\DiagTrack' -Key 'ShowedToastAtLevel' -Type REG_DWORD -Value 0
   Add-Reg -Path 'HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Privacy' -Key 'TailoredExperiencesWithDiagnosticDataEnabled' -Type REG_DWORD -Value 0
   Add-Reg -Path 'HKLM\zSOFTWARE\Policies\Microsoft\Windows\DataCollection' -Key 'AllowTelemetry' -Type REG_DWORD -Value 0
   Add-Reg -Path 'HKLM\zSYSTEM\ControlSet001\Services\dmwappushservice' -Key 'Start' -Type REG_DWORD -Value 4
 
+  <#
+  Microsoft\Windows\AppID\SmartScreenSpecific
+  Microsoft\Windows\Application Experience\AitAgent
+  Microsoft\Windows\Customer Experience Improvement Program\Uploader
+  Microsoft\Windows\Shell\FamilySafetyUpload
+  Microsoft\Office\OfficeTelemetry\AgentFallBack2016
+  Microsoft\Office\OfficeTelemetry\OfficeTelemetryAgentLogOn2016
+  Microsoft\Office\OfficeTelemetryAgentLogOn
+  Microsoft\Office\OfficeTelemetryAgentFallBack
+  Microsoft\Office\Office 15 Subscription Heartbeat
+  #>
   # Delete 'Microsoft\Windows\Application Experience\Microsoft Compatibility Appraiser' Task
   Remove-Reg -Path 'HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\Tasks\{0600DD45-FAF2-4131-A006-0B17509B9F78}'
+  # Delete 'Microsoft\Windows\Application Experience\ProgramDataUpdater' Task
+  Remove-Reg -Path 'HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\Tasks\{0671EB05-7D95-4153-A32B-1426B9FE61DB}'
+  # Delete 'Microsoft\Windows\Application Experience\StartupAppTask'
+  Remove-Reg -Path 'HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\Tasks\{645AE3F4-2ABB-4B23-BBCC-8501D777B798}'
+  # Delete 'Microsoft\Windows\Autochk\Proxy' Task
+  Remove-Reg -Path 'HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\Tasks\{87BF85F4-2CE1-4160-96EA-52F554AA28A2}'
+  # Delete 'Microsoft\Windows\CertificateServicesClient\KeyPreGenTask' Task
+  Remove-Reg -Path 'HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\Tasks\{8A9C643C-3D74-4099-B6BD-9C6D170898B1}'
+  # Delete 'Microsoft\Windows\Clip\License Validation'
+  Remove-Reg -Path 'HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\Tasks\{D1871301-47D9-4F14-AC6B-B201181F1D14}'
+  # Delete 'Microsoft\Windows\CloudExperienceHost\CreateObjectTask'
+  Remove-Reg -Path 'HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\Tasks\{0AE55DFD-F51D-40DA-AB08-39B8EC339D10}'
+  # Delete 'Microsoft\Windows\Customer Experience Improvement Program\Consolidator' Task
+  Remove-Reg -Path 'HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\Tasks\{FC931F16-B50A-472E-B061-B6F79A71EF59}'
   # Delete 'Microsoft\Windows\Customer Experience Improvement Program\KernelCeipTask' Task
   Remove-Reg -Path 'HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\Tasks\{4738DE7A-BCC1-4E2D-B1B0-CADB044BFA81}'
   # Delete 'Microsoft\Windows\Customer Experience Improvement Program\UsbCeip' Task
   Remove-Reg -Path 'HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\Tasks\{6FAC31FA-4A85-4E64-BFD5-2154FF4594B3}'
-  # Delete 'Microsoft\Windows\Customer Experience Improvement Program\Consolidator' Task
-  Remove-Reg -Path 'HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\Tasks\{FC931F16-B50A-472E-B061-B6F79A71EF59}'
-  # Delete 'Microsoft\Windows\Application Experience\ProgramDataUpdater' Task
-  Remove-Reg -Path 'HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\Tasks\{0671EB05-7D95-4153-A32B-1426B9FE61DB}'
-  # Delete 'autochk proxy' Task
-  Remove-Reg -Path 'HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\Tasks\{87BF85F4-2CE1-4160-96EA-52F554AA28A2}'
-  Remove-Reg -Path 'HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\Tasks\{8A9C643C-3D74-4099-B6BD-9C6D170898B1}'
-  # Delete 'QueueReporting' Task
+  # Delete 'Microsoft\Windows\DiskDiagnostic\Microsoft-Windows-DiskDiagnosticDataCollector'
+  Remove-Reg -Path 'HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\Tasks\{C68DEF50-9094-469B-8AE1-7B82DE1329FB}'
+  # Delete 'Microsoft\Windows\DiskFootprint\Diagnostics'
+  Remove-Reg -Path 'HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\Tasks\{987F6860-11F5-47B3-889B-0A3D064576EE}'
+  # Delete 'Microsoft\Windows\FileHistory\File History (maintenance mode)'
+  Remove-Reg -Path 'HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\Tasks\{CF83D93E-BA20-4111-9576-C96A14835C99}'
+  # Delete 'Microsoft\Windows\NetTrace\GatherNetworkInfo'
+  Remove-Reg -Path 'HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\Tasks\{1169460A-DB63-4AC1-8823-39864DDC78CD}'
+  # Delete 'Microsoft\Windows\PI\Sqm-Tasks'
+  Remove-Reg -Path 'HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\Tasks\{8DBCDCA3-980B-406C-89AF-65E51F99C0BB}'
+  # Delete 'Microsoft\Windows\Power Efficiency Diagnostics\AnalyzeSystem'
+  Remove-Reg -Path 'HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\Tasks\{95FE2315-4715-4B80-8158-D9AA3FFE11D7}'
+  # Delete 'Microsoft\Windows\Shell\FamilySafetyMonitor'
+  Remove-Reg -Path 'HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\Tasks\{CE486984-DC95-4C4A-9B22-3B4057686F0D}'
+  # Delete 'Microsoft\Windows\Shell\FamilySafetyRefresh'
+  Remove-Reg -Path 'HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\Tasks\{0E07F737-03F6-4FF4-9EDA-D9D551D3E90A}'
+  # Delete 'Microsoft\Windows\Windows Error Reporting\QueueReporting' Task
   Remove-Reg -Path 'HKLM\zSOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\Tasks\{E3176A65-4E44-4ED3-AA73-3283660ACB9C}'
 
+  # No Advertisement in Windows Explorer
+  Write-HInfo 'No Advertisement in Windows Explorer'
+  Add-Reg -Path 'HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Key 'ShowSyncProviderNotifications' -Type REG_DWORD -Value 0
 
   #####################
   #    03 Security    #
   #####################
+  # UAC Level 3 (default value)
+  Write-HInfo 'Set UAC level to 3'
+  Add-Reg -Path 'HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -Key 'ConsentPromptBehaviorAdmin' -Type REG_DWORD -Value 5
+  Add-Reg -Path 'HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -Key 'ConsentPromptBehaviorUser' -Type REG_DWORD -Value 3
+  Add-Reg -Path 'HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -Key 'EnableInstallerDetection' -Type REG_DWORD -Value 1
+  Add-Reg -Path 'HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -Key 'EnableLUA' -Type REG_DWORD -Value 1
+  Add-Reg -Path 'HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -Key 'EnableVirtualization' -Type REG_DWORD -Value 1
+  Add-Reg -Path 'HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -Key 'PromptOnSecureDesktop' -Type REG_DWORD -Value 1
+  Add-Reg -Path 'HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -Key 'ValidateAdminCodeSignatures' -Type REG_DWORD -Value 0
+  Add-Reg -Path 'HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -Key 'FilterAdministratorToken' -Type REG_DWORD -Value 0
 
+  # Queue 'Remove Account Password Exipiration'
+  Write-HInfo "Queue 'Remove Account Password Expiration'"
+  Add-Reg -Path 'HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce' -Key '!RemovePasswordExpiration' -Type REG_SZ -Value 'wmic UserAccount set PasswordExpires=False'
+
+  # Queue 'Allow Symbolic Link for Everyone' (Requires 'ntrights.exe' on %PATH%)
+  Write-HInfo "Queue 'Allow Symbolic Link for Everyone'`n     Make sure 'ntrights.exe' is present in %PATH%"
+  Add-Reg -Path 'HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce' -Key '!AllowSymbolicLink' -Type REG_SZ -Value 'ntrights +r SeCreateSymbolicLinkPrivilege -u Everyone'
 
   #########################
   #    04 Default Apps    #
@@ -364,6 +481,7 @@ function Main {
   Remove-Reg -Path 'HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager\SuggestedApps'
 
   # Disable Cortana
+  Write-HInfo 'Disable Cortana'
   Add-Reg -Path 'HKLM\zSOFTWARE\Policies\Microsoft\Windows\Windows Search' -Key 'AllowCloudSearch' -Type REG_DWORD -Value 0
   Add-Reg -Path 'HKLM\zSOFTWARE\Policies\Microsoft\Windows\Windows Search' -Key 'AllowCortana' -Type REG_DWORD -Value 0
   Add-Reg -Path 'HKLM\zSOFTWARE\Policies\Microsoft\Windows\Windows Search' -Key 'AllowCortanaAboveLock' -Type REG_DWORD -Value 0
@@ -377,35 +495,166 @@ function Main {
   Remove-Reg -Path 'HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Run' -Key 'OneDriveSetup'
 
   # Prevent DevHome and Outlook Installation
+  Write-HInfo 'Prevent Installation of DevHome & Outlook'
   Add-Reg -Path 'HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Orchestrator\UScheduler\OutlookUpdate' -Key 'workCompleted' -Type REG_DWORD -Value 1
   Add-Reg -Path 'HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Orchestrator\UScheduler\DevHomeUpdate' -Key 'workCompleted' -Type REG_DWORD -Value 1
   Remove-Reg -Path 'HKLM\zSOFTWARE\Microsoft\WindowsUpdate\Orchestrator\UScheduler_Oobe\OutlookUpdate'
   Remove-Reg -Path 'HKLM\zSOFTWARE\Microsoft\WindowsUpdate\Orchestrator\UScheduler_Oobe\DevHomeUpdate'
 
-
   ###########################
   #    05 File Operation    #
   ###########################
+  # Disable F1 Help
+  Write-HInfo 'Disable F1 Help'
+  takeown.exe /f "$MountDir\Windows\HelpPane.exe"
+  icacls.exe "$MountDir\Windows\HelpPane.exe" /deny Everyone:(X)
 
+  # Save JFIF as JPG
+  Write-HInfo 'Save JFIF as JPG'
+  Add-Reg -Path 'HKLM\zSOFTWARE\Classes\MIME\Database\Content Type\image/jpeg' -Key 'Extension' -Type REG_SZ -Value '.jpg'
 
-  #############################
-  #    06 Windows Explorer    #
-  #############################
+  #######################################
+  #    06 Windows Shell (+ Explorer)    #
+  #######################################
+  # Disable 'Home' in Setting App
+  Write-HInfo "Disable 'Home' in Setting"
+  Add-Reg -Path 'HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer' -Key 'SettingsPageVisibility' -Type REG_SZ -Value 'hide:home'
 
+  # Increase Icon Cache Size
+  Write-HInfo 'Increase Icon Cache Size'
+  Add-Reg -Path 'HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Explorer' -Key 'MaxCachedIcons' -Type REG_SZ -Value 65535
+
+  # Disable Aero Shake
+  Write-HInfo 'Disable Aero Shake'
+  Add-Reg -Path 'HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Key 'DisallowShaking' -Type REG_DWORD -Value 1
+  Add-Reg -Path 'HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Key 'DisallowShaking' -Type REG_DWORD -Value 1
+
+  # Show Detailed Status Message on Boot/Shutdown
+  Write-HInfo 'Show Detailed Status Message on Boot/Shutdown'
+  Add-Reg -Path 'HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -Key 'VerboseStatus' -Type REG_DWORD -Value 1
+  Add-Reg -Path 'HKLM\zSOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Policies\System' -Key 'VerboseStatus' -Type REG_DWORD -Value 1
+
+  # Disable BING Integration on Search Box
+  Write-HInfo 'Disable BING Integration on Search Box'
+  Add-Reg -Path 'HKLM\zSOFTWARE\Policies\Microsoft\Windows\Explorer' -Key 'DisableSearchBoxSuggestions' -Type REG_DWORD -Value 1
+
+  # Allow Long Path
+  Write-HInfo 'Allow Long Path'
+  Add-Reg -Path 'HKLM\zSOFTWARE\Microsoft\Command Processor' -Key 'CompletionChar' -Type REG_DWORD -Value 9
+  Add-Reg -Path 'HKLM\zSYSTEM\ControlSet001\Control\FileSystem' -Key 'LongPathsEnabled' -Type REG_DWORD -Value 1
+
+  # Increase Refresh Rate of Windows Explorer
+  Write-HInfo 'Increase Refresh Rate of Windows Explorer'
+  Add-Reg -Path 'HKLM\zSYSTEM\ControlSet001\Control\Update' -Key 'UpdateMode' -Type REG_DWORD -Value 0
+  Add-Reg -Path 'HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\explorer.exe' -Key 'DontUseDesktopChangeRouter' -Type REG_DWORD -Value 1
+
+  # Prevent Asking of New Default Program
+  Write-HInfo 'Prevent Asking of New Default Program'
+  Add-Reg -Path 'HKLM\zSOFTWARE\Policies\Microsoft\Windows\Explorer' -Key 'NoNewAppAlert' -Type REG_DWORD -Value 1
+
+  # Remove Unnecessary Folders from My PC
+  Write-HInfo 'Remove Unnecessary Folders from My PC'
+  $mypc = @(
+    '{B4BFCC3A-DB2C-424C-B029-7FE99A87C641}' # Desktop
+    '{A8CDFF1C-4878-43BE-B5FD-F8091C1C60D0}' # Documents
+    '{D3162B92-9365-467A-956B-92703ACA08AF}' # Documents
+    '{374DE290-123F-4565-9164-39C4925E467B}' # Downloads
+    '{088E3905-0323-4B02-9826-5D99428E115F}' # Downloads
+    '{1CF1260C-4DD0-4EBB-811F-33C572699FDE}' # Music
+    '{3DFDF296-DBEC-4FB4-81D1-6A3438BCF4DE}' # Music
+    '{3ADD1653-EB32-4CB0-BBD7-DFA0ABB5ACCA}' # Picture
+    '{24AD3AD4-A569-4530-98E1-AB02F9417AA8}' # Picture
+    '{A0953C92-50DC-43BF-BE83-3742FED03C9C}' # Video
+    '{F86FA3AB-70D2-4FC7-9C99-FCBF05467F3A}' # Video
+    '{0DB7E03F-FC29-4DC6-9020-FF41B59E513A}' # 3D Objects
+  )
+  foreach ($ns in $mypc) {
+    Remove-MyPC -UUID $ns
+  }
+
+  # Remove Unnecessary Folders from User Directory
+  Write-HInfo 'Remove Unnecessary Folders from User Directory'
+  $usrdir = @(
+    '{31C0DD25-9439-4F12-BF41-7FF4EDA38722}' # 3D Objects
+    '{7D1D3A04-DEBB-4115-95CF-2F29DA2920DA}' # Search
+    '{BFB9D5E0-C6A9-404C-B2B2-AE6DB6AF4968}' # Link
+    '{56784854-C6CB-462B-8169-88E350ACB882}' # Contact
+    '{A52BBA46-E9E1-435F-B3D9-28DAA648C0F6}' # OneDrive
+    '{1777F761-68AD-4D8A-87BD-30B759FA33DD}' # Favorite
+  )
+  foreach ($ns in $usrdir) {
+    Remove-UserDir -UUID $ns
+  }
+
+  # Fix Names of Folders of User Directory
+  Write-HInfo 'Fix Names of Folders of User Directory'
+  $namefix = @(
+    @('{754AC886-DF64-4CBA-86B5-F7FBF4FBCEF5}', '{B4BFCC3A-DB2C-424C-B029-7FE99A87C641}'), # Desktop
+    @('{F42EE2D3-909F-4907-8871-4C22FC0BF756}', '{D3162B92-9365-467A-956B-92703ACA08AF}'), # Documents
+    @('{FDD39AD0-238F-46AF-ADB4-6C85480369C7}', '{A8CDFF1C-4878-43BE-B5FD-F8091C1C60D0}'), # ???
+    @('{374DE290-123F-4565-9164-39C4925E467B}', '{374DE290-123F-4565-9164-39C4925E467B}'), # Downloads
+    @('{7D83EE9B-2244-4E70-B1F5-5393042AF1E4}', '{088E3905-0323-4B02-9826-5D99428E115F}'), # ???
+    @('{A0C69A99-21C8-4671-8703-7934162FCF1D}', '{3DFDF296-DBEC-4FB4-81D1-6A3438BCF4DE}'), # Music
+    @('{4BD8D571-6D19-48D3-BE97-422220080E43}', '{1CF1260C-4DD0-4EBB-811F-33C572699FDE}'), # ???
+    @('{0DDD015D-B06C-45D5-8C4C-F59713854639}', '{33E28130-4E1E-4676-835A-98395C3BC3BB}'), # Picture
+    @('{33E28130-4E1E-4676-835A-98395C3BC3BB}', '{33E28130-4E1E-4676-835A-98395C3BC3BB}'), # ???
+    @('{18989B1D-99B5-455B-841C-AB7C74E4DDFC}', '{A0953C92-50DC-43BF-BE83-3742FED03C9C}'), # Video
+    @('{35286A68-3C57-41A1-BBB1-0EAE73D76C95}', '{F86FA3AB-70D2-4FC7-9C99-FCBF05467F3A}') # ???
+  )
+  foreach ($n in $namefix) {
+    Fix-UserDir -Path $n[0] -Name $n[1]
+  }
+
+  # Disable Keyboard Accessibility Keys
+  Write-HInfo 'Disable Keyboard Accessibility Keys'
+  Add-Reg -Path 'HKLM\zNTUSER\Control Panel\Accessibility\StickyKeys' -Key 'Flags' -Type REG_SZ -Value '506'
+  Add-Reg -Path 'HKLM\zNTUSER\Control Panel\Accessibility\ToggleKeys' -Key 'Flags' -Type REG_SZ -Value '58'
+  Add-Reg -Path 'HKLM\zNTUSER\Control Panel\Accessibility\Keyboard Response' -Key 'Flags' -Type REG_SZ -Value '122'
+
+  # Disable Narrator
+  Write-HInfo 'Disable Narrator'
+  Add-Reg -Path 'HKLM\zNTUSER\Software\Microsoft\Narrator\NoRoam' -Key 'WinEnterLaunchEnabled' -Type REG_DWORD -Value 0
+
+  # Set Dark Theme
+  Write-HInfo 'Set Dark Theme'
+  Add-Reg -Path 'HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize' -Key 'AppsUseLightTheme' -Type REG_DWORD -Value 0
+
+  # Enable color in Command Prompt
+  Write-HInfo 'Enable color in Command Prompt'
+  Add-Reg -Path 'HKLM\zNTUSER\Console' -Key 'VirtualTerminalLevel' -Type REG_DWORD -Value 1
+
+  # Disable Device Configuration Modal
+  Write-HInfo 'Disable Device Configuration Modal'
+  Add-Reg -Path 'HKLM\zSOFTWARE\Microsoft\Windows\CurrentVersion\UserProfileEngagement' -Key 'ScoobeSystemSettingEnabled' -Type REG_DWORD -Value 1
+
+  # Set 'Always on Top' for Task Manager
+  Write-HInfo "Set 'Always on Top' for Task Manager"
+  Add-Reg -Path 'HKLM\zNTUSER\Software\Microsoft\Windows\CurrentVersion\TaskManager' -Key 'AlwaysOnTop' -Type REG_DWORD -Value 1
+
+  # Configure Visual Effects
+  Write-HInfo 'Configure Visual Effects'
+  Add-Reg -Path 'HKLM\zNTUSER\Control Panel\Desktop' -Key 'UserPreferencesMask' -Type REG_BINARY -Value '9e1e038012000000'
 
   ####################
   #    07 Taskbar    #
   ####################
   # Disable Chat Icon
+  Write-HInfo 'Disable Chat Icon'
   Add-Reg -Path 'HKLM\zNTUSER\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Key 'TaskbarMn' -Type REG_DWORD -Value 0
   Add-Reg -Path 'HKLM\zSOFTWARE\Policies\Microsoft\Windows\Windows Chat' -Key 'ChatIcon' -Type REG_DWORD -Value 3
-
-
 
   ###############################
   #    08 MS Edge & WebView2    #
   ###############################
+  # Prevent Edge Prelaunch
+  Add-Reg -Path 'HKLM\zSOFTWARE\Policies\Microsoft\MicrosoftEdge\Main' -Key 'AllowPrelaunch' -Type REG_DWORD -Value 0
+  Add-Reg -Path 'HKLM\zSOFTWARE\Policies\Microsoft\MicrosoftEdge\TabPreloader' -Key 'AllowTabPreloading' -Type REG_DWORD -Value 0
+  Add-Reg -Path 'HKLM\zSOFTWARE\Policies\Microsoft\MicrosoftEdge\TabPreloader' -Key 'PreventTabPreloading' -Type REG_DWORD -Value 1
 
+  # Prevent Edge Webview2 Prelaunch
+  Write-HInfo 'Prevent Edge Webview2 Prelaunch'
+  Add-Reg -Path 'HKLM\zSOFTWARE\Policies\Microsoft\Dsh' -Key 'AllowNewsAndInterests' -Type REG_DWORD -Value 0
+  Add-Reg -Path 'HKLM\zSOFTWARE\WOW6432Node\Policies\Microsoft\Dsh' -Key 'AllowNewsAndInterests' -Type REG_DWORD -Value 0
 
   #######
   # END #
